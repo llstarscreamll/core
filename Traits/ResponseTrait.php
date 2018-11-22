@@ -8,7 +8,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\AbstractPaginator;
 use Apiato\Core\Abstracts\Transformers\Transformer;
-use Apiato\Core\Exceptions\InvalidTransformerException;
 
 /**
  * Class ResponseTrait
@@ -38,19 +37,19 @@ trait ResponseTrait
         array $meta = [],
               $resourceKey = null
     ) {
-        // first, we need to create the transformer
+        // create instance of the transformer
+        $transformer = new $transformerName();
+
+        // if an instance of Transformer was passed
         if ($transformerName instanceof Transformer) {
-            // check, if we have provided a respective TRANSFORMER class
             $transformer = $transformerName;
-        } else {
-            // of if we just passed the classname
-            $transformer = new $transformerName();
         }
 
-        // now, finally check, if the class is really a TRANSFORMER
-        if (! ($transformer instanceof Transformer)) {
-            throw new InvalidTransformerException();
-        }
+        // append the includes from the transform() to the defaultIncludes
+        $includes = array_unique(array_merge($transformer->getDefaultIncludes(), $includes));
+
+        // set the relationships to be included
+        $transformer->setDefaultIncludes($includes);
 
         // add specific meta information to the response message
         $this->metaData = [
@@ -77,15 +76,10 @@ trait ResponseTrait
         }
 
         $fractal = Fractal::create($data, $transformer)->withResourceName($resourceKey)->addMeta($this->metaData);
-
-        // read includes passed via query params in url
-        $requestIncludes = $this->parseRequestedIncludes();
-
-        // merge the requested includes with the one added by the transform() method itself
-        $requestIncludes = array_unique(array_merge($includes, $requestIncludes));
-
-        // and let fractal include everything
-        $fractal->parseIncludes($requestIncludes);
+        // check if the user wants to include additional relationships
+        if ($requestIncludes = Request::get('include')) {
+            $fractal->parseIncludes($requestIncludes);
+        }
 
         // apply request filters if available in the request
         if ($requestFilters = Request::get('filter')) {
@@ -178,17 +172,18 @@ trait ResponseTrait
      */
     private function filterResponse(array $responseArray, array $filters)
     {
-        $filteredData = null;
+        $filteredData             = null;
+        $responseArrayWithoutMeta = array_except($responseArray, ['meta']);
 
-        if ($this->array_is_associative($responseArray)) {
-            return $this->filterObjectKeys($responseArray, $filters);
+        if ($this->array_is_associative($responseArrayWithoutMeta)) {
+            return $this->filterObjectKeys($responseArrayWithoutMeta, $filters);
         }
 
-        foreach ($responseArray as $key => $value) {
+        foreach ($responseArrayWithoutMeta as $key => $value) {
             array_set($filteredData, $key, $this->filterResponse($value, $filters));
         }
 
-        return $filteredData;
+        return array_merge($filteredData, ['meta' => array_get($responseArray, 'meta', [])]);
     }
 
     /**
@@ -214,21 +209,14 @@ trait ResponseTrait
             foreach ($filters as $filter) {
                 $keyWithWildcard = preg_replace("/\.(\d)+\./", ".*.", $key);
 
-                if ($keyWithWildcard === $filter) {
+                if ($keyWithWildcard === $filter || preg_match("/^{$filter}\./", $keyWithWildcard)) {
+
                     array_set($filteredData, $key, $value);
                 }
             }
         }
 
         return $filteredData;
-    }
-
-    /**
-     * @return array
-     */
-    protected function parseRequestedIncludes(): array
-    {
-        return explode(',', Request::get('include'));
     }
 
 }
