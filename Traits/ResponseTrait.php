@@ -176,14 +176,16 @@ trait ResponseTrait
         $responseArrayWithoutMeta = array_except($responseArray, ['meta']);
 
         if ($this->array_is_associative($responseArrayWithoutMeta)) {
-            return $this->filterObjectKeys($responseArrayWithoutMeta, $filters);
+            $filteredData = $this->filterObjectKeys($responseArrayWithoutMeta, $filters);
+        } else {
+            foreach ($responseArrayWithoutMeta as $key => $value) {
+                array_set($filteredData, $key, $this->filterResponse($value, $filters));
+            }
         }
 
-        foreach ($responseArrayWithoutMeta as $key => $value) {
-            array_set($filteredData, $key, $this->filterResponse($value, $filters));
-        }
+        $filteredData['meta'] = array_get($responseArray, 'meta', []);
 
-        return array_merge($filteredData, ['meta' => array_get($responseArray, 'meta', [])]);
+        return $filteredData;
     }
 
     /**
